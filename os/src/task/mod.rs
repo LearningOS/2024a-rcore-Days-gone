@@ -14,7 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
@@ -54,6 +54,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_count: [0; MAX_SYSCALL_NUM],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -134,6 +135,18 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// return the current task
+    pub fn current_task_tcb(&self) -> TaskControlBlock {
+        let current_task = self.inner.exclusive_access().current_task;
+        self.inner.exclusive_access().tasks[current_task]
+    }
+
+    /// return the mut* for a task
+    pub fn current_task_tcb_mut(&self) -> *mut TaskControlBlock {
+        let current_task = self.inner.exclusive_access().current_task;
+        &mut self.inner.exclusive_access().tasks[current_task]
     }
 }
 
