@@ -2,13 +2,15 @@
 use alloc::sync::Arc;
 
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     loader::get_app_data_by_name,
     mm::{translated_refmut, translated_str},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
+        add_task, cur_task_translate, current_task, current_user_token, exit_current_and_run_next,
+        get_current_taskinfo, mmap_current_task, munmap_current_task, suspend_current_and_run_next,
+        TaskStatus,
     },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -79,7 +81,11 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+    trace!(
+        "kernel::pid[{}] sys_waitpid [{}]",
+        current_task().unwrap().pid.0,
+        pid
+    );
     let task = current_task().unwrap();
     // find a child process
 
@@ -122,7 +128,15 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let timeval = TimeVal {
+        sec: get_time_us() / 1_000_000,
+        usec: get_time_us() % 1_000_000,
+    };
+    let va = _ts as usize;
+    cur_task_translate(va).map(|pa| unsafe {
+        (pa as *mut TimeVal).write(timeval);
+    });
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -133,16 +147,35 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
         "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let (status, syscall_times, time) = get_current_taskinfo();
+    let va = _ti as usize;
+    cur_task_translate(va).map(|pa| unsafe {
+        (pa as *mut TaskInfo).write(TaskInfo {
+            status,
+            syscall_times,
+            time,
+        });
+    });
+    0
 }
 
+const PORT_CHECK: usize = 0x7;
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if (_port & PORT_CHECK == 0) || (_port & !PORT_CHECK != 0) {
+        error!("kernel: sys_mmap Port error, port: {:#x}", _port);
+        return -1;
+    }
+    if _start % PAGE_SIZE != 0 {
+        error!("kernel: sys_mmap Start error, start: {:#x}", _start);
+        return -1;
+    }
+    let rc = mmap_current_task(_start, _len, _port);
+    rc
 }
 
 /// YOUR JOB: Implement munmap.
@@ -151,7 +184,12 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _start % PAGE_SIZE != 0 {
+        error!("kernel: sys_munmap Start error, start: {:08x}", _start);
+        return -1;
+    }
+    let rc = munmap_current_task(_start, _len);
+    rc
 }
 
 /// change data segment size

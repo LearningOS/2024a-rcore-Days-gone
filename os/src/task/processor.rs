@@ -7,6 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::MAX_SYSCALL_NUM;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -108,4 +109,42 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Mmap for current task
+pub fn mmap_current_task(start: usize, len: usize, permit: usize) -> isize {
+    let cur_task = current_task().unwrap();
+    let rc = cur_task
+        .inner_exclusive_access()
+        .memory_set
+        .mmap(start, len, permit);
+    rc
+}
+
+/// Munmmap for current task
+pub fn munmap_current_task(start: usize, len: usize) -> isize {
+    let cur_task = current_task().unwrap();
+    let rc = cur_task
+        .inner_exclusive_access()
+        .memory_set
+        .munmap(start, len);
+    rc
+}
+
+/// Translate VA to PA
+pub fn cur_task_translate(v_addr: usize) -> Option<usize> {
+    let cur_task = current_task().unwrap();
+    let rc = cur_task
+        .inner_exclusive_access()
+        .memory_set
+        .address_translate(v_addr);
+    rc
+}
+
+/// Return the current task's information
+pub fn get_current_taskinfo() -> (TaskStatus, [u32;MAX_SYSCALL_NUM], usize) 
+{
+    let cur_task = current_task().unwrap();
+    let (status, syscall_times, time) = cur_task.inner_exclusive_access().get_task_info();
+    (status, syscall_times, time)
 }
