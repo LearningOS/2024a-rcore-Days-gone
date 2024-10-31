@@ -14,8 +14,10 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -152,6 +154,52 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// Mmap for the current pages
+    pub fn mmap_current_task(&self, _start: usize, _len: usize, _port: usize) -> isize {
+        // todo!("mmap for the current task");
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        let current_task = &mut inner.tasks[cur];
+        let rc = current_task.memory_set.mmap(_start, _len, _port);
+        rc
+    }
+
+    /// Munmap for the current pages
+    pub fn munmap_current_task(&self, _start: usize, _len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur: usize = inner.current_task;
+        let current_task = &mut inner.tasks[cur];
+        let rc = current_task.memory_set.munmap(_start, _len);
+        rc
+    }
+
+    /// Translate VA to PA
+    pub fn cur_task_translate(&self, va: usize) -> Option<usize> {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        let current_task = &inner.tasks[cur];
+        current_task.memory_set.address_translate(va)
+    }
+
+    /// Get the current taskinfo
+    pub fn get_current_taskinfo(&self) -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        let current_task = &inner.tasks[cur];
+        (
+            current_task.task_status,
+            current_task.syscall_times,
+            get_time_ms()
+        )
+    }
+
+    /// Update syscall statistics
+    pub fn update_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].syscall_times[syscall_id] += 1;
     }
 }
 

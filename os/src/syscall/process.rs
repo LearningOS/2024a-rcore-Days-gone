@@ -1,9 +1,11 @@
 //! Process management syscalls
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     task::{
         change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus,
+        TASK_MANAGER,
     },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -43,7 +45,15 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+    let timeval = TimeVal {
+        sec: get_time_us() / 1_000_000,
+        usec: get_time_us() % 1_000_000,
+    };
+    let va = _ts as usize;
+    TASK_MANAGER.cur_task_translate(va).map(|pa| unsafe {
+        (pa as *mut TimeVal).write(timeval);
+    });
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -51,20 +61,43 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
-    -1
+    let (status, syscall_times, time) = TASK_MANAGER.get_current_taskinfo();
+    let va = _ti as usize;
+    TASK_MANAGER.cur_task_translate(va).map(|pa| unsafe {
+        (pa as *mut TaskInfo).write(TaskInfo {
+            status,
+            syscall_times,
+            time,
+        });
+    });
+    0
 }
 
+const PORT_CHECK: usize = 0x7;
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+    if (_port & PORT_CHECK == 0) || (_port & !PORT_CHECK != 0) {
+        error!("kernel: sys_mmap Port error, port: {:#x}", _port);
+        return -1;
+    }
+    if _start % PAGE_SIZE != 0 {
+        error!("kernel: sys_mmap Start error, start: {:#x}", _start);
+        return -1;
+    }
+    let rc = TASK_MANAGER.mmap_current_task(_start, _len, _port);
+    rc
 }
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+    if _start % PAGE_SIZE != 0 {
+        error!("kernel: sys_munmap Start error, start: {:08x}", _start);
+        return -1;
+    }
+    let rc = TASK_MANAGER.munmap_current_task(_start, _len);
+    rc
 }
+
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {
     trace!("kernel: sys_sbrk");

@@ -5,7 +5,8 @@ use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
 use crate::config::{
-    KERNEL_STACK_SIZE, MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE,
+    KERNEL_STACK_SIZE, MEMORY_END, PAGE_SIZE, PAGE_SIZE_BITS, TRAMPOLINE, TRAP_CONTEXT_BASE,
+    USER_STACK_SIZE,
 };
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
@@ -51,6 +52,87 @@ impl MemorySet {
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
+
+    /// Mmap for the page table
+    pub fn mmap(&mut self, strat: usize, len: usize, permit: usize) -> isize {
+        debug!(
+            "[Kernel]: try mmap from {:08x} to {:08x}, permit: {:08x}",
+            strat,
+            strat + len - 1,
+            permit
+        );
+        // Make Flag
+        let mut flag = match permit {
+            0x1 => PTEFlags::R,
+            0x2 => PTEFlags::W,
+            0x3 => PTEFlags::R | PTEFlags::W,
+            0x4 => PTEFlags::X,
+            0x5 => PTEFlags::R | PTEFlags::X,
+            0x6 => PTEFlags::W | PTEFlags::X,
+            0x7 => PTEFlags::R | PTEFlags::W | PTEFlags::X,
+            _ => {
+                error!("Mmap Port error, port: {:#x}", permit);
+                return -1;
+            }
+        };
+        flag |= PTEFlags::U; // Add U flag
+        let pg_table = &self.page_table;
+        let pg_num = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+        // Chceck remmap
+        for i in 0..pg_num {
+            let vpn = VirtAddr::from(strat + i * PAGE_SIZE).floor();
+            if pg_table.translate(vpn).is_some_and(|pte| pte.is_valid()) {
+                error!("[Kernel] page has been mapped");
+                return -1;
+            }
+        }
+        // Map the page
+        let pg_table = &mut self.page_table;
+        for i in 0..pg_num {
+            let vpn = VirtAddr::from(strat + i * PAGE_SIZE).floor();
+            debug!(
+                "[Kernel-DBG]: mapping {:08x} - {:08x}",
+                vpn.0 << PAGE_SIZE_BITS,
+                (vpn.0 << PAGE_SIZE_BITS) + PAGE_SIZE - 1
+            );
+            let frame = frame_alloc().unwrap();
+            pg_table.map(vpn, frame.ppn, flag);
+        }
+        0
+    }
+
+    /// Munmap for the page table
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        let pg_table = &self.page_table;
+        let pg_num = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+        // Check unmmaped page
+        for i in 0..pg_num {
+            let vpn = VirtAddr::from(start + i * PAGE_SIZE).floor();
+            let opt_pte = pg_table.translate(vpn);
+            if opt_pte.is_none() || opt_pte.is_some_and(|pte| !pte.is_valid()) {
+                error!("[Kernel-DBG]:munmap page has not been mapped");
+                return -1;
+            }
+        }
+        // Unmap the page
+        let pg_table = &mut self.page_table;
+        for i in 0..pg_num {
+            let vpn = VirtAddr::from(start + i * PAGE_SIZE).floor();
+            debug!("[Kernel]: unmapping {:08x}", vpn.0 << PAGE_SIZE_BITS);
+            pg_table.unmap(vpn);
+        }
+        0
+    }
+
+    /// Translate VA to PA
+    pub fn address_translate(&self, va: usize) -> Option<usize> {
+        let offset = va & (PAGE_SIZE - 1);
+        let vpn = VirtAddr::from(va).floor();
+        let pte = self.page_table.translate(vpn)?;
+        let pa = pte.ppn().0 << PAGE_SIZE_BITS | offset;
+        Some(pa)
+    }
+
     /// Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,
