@@ -9,6 +9,7 @@ use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
 use crate::config::MAX_SYSCALL_NUM;
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -62,6 +63,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.start_time == 0usize {
+                task_inner.start_time = get_time_ms();
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -142,9 +146,17 @@ pub fn cur_task_translate(v_addr: usize) -> Option<usize> {
 }
 
 /// Return the current task's information
-pub fn get_current_taskinfo() -> (TaskStatus, [u32;MAX_SYSCALL_NUM], usize) 
-{
+pub fn get_current_taskinfo() -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
     let cur_task = current_task().unwrap();
     let (status, syscall_times, time) = cur_task.inner_exclusive_access().get_task_info();
-    (status, syscall_times, time)
+    (status, syscall_times, get_time_ms() - time)
+}
+
+/// Update the current task's syscall count
+pub fn update_cur_task_syscall_count(syscall_id: usize) -> () {
+    let cur_task = current_task().unwrap();
+    cur_task
+        .inner_exclusive_access()
+        .update_syscall_count(syscall_id);
+    ()
 }
