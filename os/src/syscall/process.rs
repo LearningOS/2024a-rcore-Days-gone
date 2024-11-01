@@ -143,13 +143,13 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
         "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    let (status, syscall_times, time) = get_current_taskinfo();
+    let (status, syscall_times, time_diff) = get_current_taskinfo();
     let va = _ti as usize;
     cur_task_translate(va).map(|pa| unsafe {
         (pa as *mut TaskInfo).write(TaskInfo {
             status,
             syscall_times,
-            time,
+            time: time_diff,
         });
     });
     0

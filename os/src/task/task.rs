@@ -5,7 +5,7 @@ use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
-use crate::timer::get_time_us;
+use crate::timer::get_time_ms;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
@@ -75,6 +75,9 @@ pub struct TaskControlBlockInner {
 
     /// Syscall count
     pub syscall_count: [u32; MAX_SYSCALL_NUM],
+
+    /// Time when task is first scheduled
+    pub start_time: usize,
 }
 
 impl TaskControlBlockInner {
@@ -99,7 +102,13 @@ impl TaskControlBlockInner {
         }
     }
     pub fn get_task_info(&self) -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
-        (self.task_status, self.syscall_count, get_time_us())
+        (self.task_status, self.syscall_count, self.start_time)
+    }
+    pub fn update_syscall_count(&mut self, syscall_id: usize) {
+        self.syscall_count[syscall_id] += 1;
+    }
+    pub fn get_time_from_init(&self) -> usize {
+        get_time_ms() - self.start_time
     }
 }
 
@@ -143,6 +152,7 @@ impl TaskControlBlock {
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                     syscall_count: [0; MAX_SYSCALL_NUM],
+                    start_time: 0,
                 })
             },
         };
@@ -225,6 +235,7 @@ impl TaskControlBlock {
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
                     syscall_count: [0; MAX_SYSCALL_NUM],
+                    start_time: 0,
                 })
             },
         });
