@@ -23,6 +23,18 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
+        // choose the least stride value task from the queue
+        let mut min_stride_idx = 0;
+        let mut min_stride = isize::MAX;
+        for i in 0..self.ready_queue.len() {
+            let task = self.ready_queue.get(i).unwrap();
+            if task.inner_exclusive_access().stride < min_stride {
+                min_stride_idx = i;
+            }
+            min_stride = task.inner_exclusive_access().stride;
+        }
+
+        self.ready_queue.swap(0, min_stride_idx);
         self.ready_queue.pop_front()
     }
 }

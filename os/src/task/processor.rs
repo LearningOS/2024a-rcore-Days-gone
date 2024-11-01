@@ -66,6 +66,8 @@ pub fn run_tasks() {
             if task_inner.start_time == 0usize {
                 task_inner.start_time = get_time_ms();
             }
+            // update its stride
+            task_inner.update_stride();
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -159,4 +161,10 @@ pub fn update_cur_task_syscall_count(syscall_id: usize) -> () {
         .inner_exclusive_access()
         .update_syscall_count(syscall_id);
     ()
+}
+
+/// Set the current task's priority
+pub fn set_cur_task_priority(priority: isize) -> isize {
+    let cur_task = current_task().unwrap();
+    cur_task.set_priority(priority)
 }
