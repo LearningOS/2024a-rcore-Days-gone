@@ -138,6 +138,9 @@ pub fn munmap_current_task(start: usize, len: usize) -> isize {
 }
 
 /// Translate VA to PA
+/// Pay Attention that this need the exclusive access to the mutex of current task
+/// If you have get the current mutex before calling, it would cause kernel panic
+/// TODO: make a impl in the TaskControlBlock
 pub fn cur_task_translate(v_addr: usize) -> Option<usize> {
     let cur_task = current_task().unwrap();
     let rc = cur_task
