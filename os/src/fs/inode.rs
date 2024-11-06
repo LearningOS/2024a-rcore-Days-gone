@@ -124,6 +124,33 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// linkat
+pub fn link_file(old_name: &str, new_name: &str) -> bool {
+    if old_name == new_name {
+        return false;
+    }
+    let res = ROOT_INODE.link(old_name, new_name);
+    res
+}
+
+/// unlink
+pub fn unlink_file(name: &str) -> bool {
+    // debug
+    let files = ROOT_INODE.ls();
+    println!("Unlink{}", name);
+    println!("--- Before Unlink ---");
+    for name in &files {
+        println!("file:{}", name);
+    }
+    let res = ROOT_INODE.unlink(name);
+    println!("--- After Done ---");
+    for name in &files {
+        println!("file:{}", name);
+    }
+    println!("--- Done Unlink ---");
+    res
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
@@ -167,11 +194,12 @@ impl File for OSInode {
             mode = StatMode::NULL;
         };
         let idx = inode.get_ino();
+        let links = inode.get_links();
         Stat {
             dev: 0,
             ino: idx,
             mode,
-            nlink: 1,
+            nlink: links,
             pad: [0; 7],
         }
     }

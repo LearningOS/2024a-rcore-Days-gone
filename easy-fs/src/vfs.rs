@@ -111,6 +111,8 @@ impl Inode {
             .lock()
             .modify(new_inode_block_offset, |new_inode: &mut DiskInode| {
                 new_inode.initialize(DiskInodeType::File);
+                // update the nlinks field
+                new_inode.nlinks += 1;
             });
         self.modify_disk_inode(|root_inode| {
             // append file in the dirent
@@ -174,6 +176,10 @@ impl Inode {
     pub fn clear(&self) {
         let mut fs = self.fs.lock();
         self.modify_disk_inode(|disk_inode| {
+            disk_inode.nlinks -= 1;
+            if disk_inode.nlinks > 0 {
+                return;
+            }
             let size = disk_inode.size;
             let data_blocks_dealloc = disk_inode.clear_size(&self.block_device);
             assert!(data_blocks_dealloc.len() == DiskInode::total_blocks(size) as usize);
@@ -197,5 +203,62 @@ impl Inode {
     pub fn get_ino(&self) -> u64 {
         let _fs = self.fs.lock();
         _fs.get_inode_idx(self.block_id as u32, self.block_offset)
+    }
+    /// Get the links
+    pub fn get_links(&self) -> u32 {
+        let _fs = self.fs.lock();
+        self.read_disk_inode(|disk_inode| disk_inode.nlinks)
+    }
+    /// Link from old to new, Now only support the ROOT_INODE
+    pub fn link(&self, old_name: &str, new_name: &str) -> bool {
+        // get the old inode so that we can modify its nlinks
+        let old_inode = self.find(old_name);
+        if old_inode.is_none() {
+            return false;
+        }
+        old_inode.unwrap().modify_disk_inode(|disknode| {
+            disknode.nlinks += 1;
+        });
+        // adding the directory
+        let mut inodeid_old = 0;
+        let mut offset_old = 0;
+        self.read_disk_inode(|disk_inode| {
+            // find inode id must be called inside the closure, for it needs the father inode's Disknode
+            inodeid_old = self.find_inode_id(old_name, disk_inode).unwrap();
+            offset_old = disk_inode.size as usize; // return the last dirent offset which is the size of self
+        });
+        self.write_at(offset_old, DirEntry::new(new_name, inodeid_old).as_bytes());
+        true
+    }
+    /// Unlink, Now only support the ROOT_INODE
+    pub fn unlink(&self, name: &str) -> bool {
+        // decrease the nlinks of the inode
+        let target = self.find(name);
+        if target.is_none() {
+            return false;
+        }
+        let target = target.unwrap();
+        target.clear();
+        // change the dirent
+        self.modify_disk_inode(|disknode| {
+            let file_count = (disknode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    disknode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    // overwrite the dirent with empty dirent
+                    disknode.write_at(
+                        DIRENT_SZ * i,
+                        DirEntry::empty().as_bytes(),
+                        &self.block_device,
+                    );
+                    break;
+                }
+            }
+        });
+        true
     }
 }
